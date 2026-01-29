@@ -30,11 +30,11 @@ class DelawareLegislationScraper:
         try:
             self.spreadsheet = self.gc.open("DE WFP Bill Tracker GA 153")
             self.sheet = self.spreadsheet.sheet1
-            print(f"Opened existing spreadsheet: DE WFP Bill Tracker GA 153")
+            print(f"Opened existing spreadsheet: {"DE WFP Bill Tracker GA 153"}")
         except gspread.SpreadsheetNotFound:
             self.spreadsheet = self.gc.create("DE WFP Bill Tracker GA 153")
             self.sheet = self.spreadsheet.sheet1
-            print(f"Created new spreadsheet: DE WFP Bill Tracker GA 153")
+            print(f"Created new spreadsheet: {"DE WFP Bill Tracker GA 153"}")
     
     def fetch_all_bills(self, ga_id=153, page_size=100):
         """Fetch all bills from GA 153 across multiple pages"""
@@ -111,14 +111,32 @@ class DelawareLegislationScraper:
     
     def transform_bill(self, bill):
         """Transform API response into sheet-ready format"""
+        bill_number = bill.get("LegislationNumber")
+        legislation_id = bill.get("LegislationId")
+        parent_bill = bill.get("SubstituteParentLegislationDisplayCode") or ""
+        amendment_parent = bill.get("AmendmentParentLegislationDisplayCode") or ""
+        legislation_display_code = bill.get("LegislationDisplayCode")
+        
+        # Determine Sort By value
+        if parent_bill:
+            sort_by = parent_bill
+        elif amendment_parent:
+            sort_by = amendment_parent
+        else:
+            sort_by = bill_number
+        
+        # Create clickable link using Google Sheets HYPERLINK formula
+        bill_url = f"https://legis.delaware.gov/BillDetail?LegislationId={legislation_id}"
+        bill_link = f'=HYPERLINK("{bill_url}", "{legislation_display_code}")'
+        
         return {
-            "LegislationId": bill.get("LegislationId"),
-            "BillNumber": bill.get("LegislationNumber"),
-            "DisplayCode": bill.get("LegislationDisplayCode"),
+            "LegislationId": legislation_id,
+            "SortBy": sort_by,
+            "BillNumber": bill_number,
+            "DisplayCode": bill_link,
             "Type": bill.get("LegislationTypeId"),
             "Chamber": bill.get("ChamberName"),
             "Sponsor": bill.get("Sponsor"),
-            "SponsorLink": bill.get("LegislatorDetailLink"),
             "ShortTitle": bill.get("ShortTitle") or "",
             "LongTitle": bill.get("LongTitle") or "",
             "Synopsis": bill.get("Synopsis") or "",
@@ -126,8 +144,8 @@ class DelawareLegislationScraper:
             "IntroducedDate": self.parse_json_date(bill.get("IntroductionDateTime")),
             "LastStatusDate": self.parse_json_date(bill.get("LegislationStatusDateTime")),
             "HasAmendments": bill.get("HasAmendments"),
-            "ParentBill": bill.get("SubstituteParentLegislationDisplayCode") or "",
-            "AmendmentParent": bill.get("AmendmentParentLegislationDisplayCode") or ""
+            "ParentBill": parent_bill,
+            "AmendmentParent": amendment_parent
         }
     
     def get_existing_ids(self):
@@ -161,10 +179,10 @@ class DelawareLegislationScraper:
     
     def write_to_sheet(self, bills, existing_ids):
         """Write bill data to Google Sheet efficiently"""
-        # Define column headers
+        # Define column headers - removed SponsorLink
         headers = [
-            "LegislationId", "BillNumber", "DisplayCode", "Type",
-            "Chamber", "Sponsor", "SponsorLink", "ShortTitle",
+            "LegislationId", "SortBy", "BillNumber", "DisplayCode", "Type",
+            "Chamber", "Sponsor", "ShortTitle",
             "LongTitle", "Synopsis", "Status", "IntroducedDate",
             "LastStatusDate", "HasAmendments", "ParentBill", "AmendmentParent"
         ]
@@ -187,14 +205,14 @@ class DelawareLegislationScraper:
             print("No new bills to add")
             return
         
-        # Convert to rows
+        # Convert to rows - use value_input_option='USER_ENTERED' for formulas
         rows = []
         for bill in new_bills:
             row = [bill.get(header, "") for header in headers]
             rows.append(row)
         
-        # Batch append
-        self.sheet.append_rows(rows)
+        # Batch append with USER_ENTERED to allow formulas
+        self.sheet.append_rows(rows, value_input_option='USER_ENTERED')
         print(f"Added {len(rows)} new bills")
     
     def run(self):
