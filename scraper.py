@@ -109,6 +109,18 @@ class DelawareLegislationScraper:
             print(f"Error parsing date '{json_date}': {e}")
             return ""
     
+    def get_legislation_type_name(self, type_id):
+        """Convert legislation type ID to human-readable name"""
+        type_mapping = {
+            1: "Bill",
+            2: "Resolution",
+            3: "Concurrent Resolution",
+            4: "Joint Resolution",
+            5: "Amendment",
+            6: "Substitute"
+        }
+        return type_mapping.get(type_id, f"Unknown ({type_id})")
+    
     def transform_bill(self, bill):
         """Transform API response into sheet-ready format"""
         bill_number = bill.get("LegislationNumber")
@@ -125,16 +137,19 @@ class DelawareLegislationScraper:
         else:
             sort_by = bill_number
         
+        # Normalize the Sort By value for proper sorting (e.g., HB 13 -> HB 013)
+        sort_by_normalized = self.normalize_bill_number(sort_by)
+        
         # Create clickable link using Google Sheets HYPERLINK formula
         bill_url = f"https://legis.delaware.gov/BillDetail?LegislationId={legislation_id}"
         bill_link = f'=HYPERLINK("{bill_url}", "{legislation_display_code}")'
         
         return {
             "LegislationId": legislation_id,
-            "SortBy": sort_by,
+            "SortBy": sort_by_normalized,
             "BillNumber": bill_number,
             "DisplayCode": bill_link,
-            "Type": bill.get("LegislationTypeId"),
+            "Type": self.get_legislation_type_name(bill.get("LegislationTypeId")),
             "Chamber": bill.get("ChamberName"),
             "Sponsor": bill.get("Sponsor"),
             "ShortTitle": bill.get("ShortTitle") or "",
@@ -147,6 +162,28 @@ class DelawareLegislationScraper:
             "ParentBill": parent_bill,
             "AmendmentParent": amendment_parent
         }
+    
+    def normalize_bill_number(self, bill_number):
+        """Normalize bill number for sorting (e.g., HB 13 -> HB 013)"""
+        if not bill_number:
+            return ""
+        
+        import re
+        # Match pattern like "HB 13" or "SA 2" or "HS 1 for HB 100"
+        match = re.match(r'^([A-Z]+)\s+(\d+)', bill_number)
+        
+        if match:
+            prefix = match.group(1)  # e.g., "HB", "SA", "HS"
+            number = match.group(2)  # e.g., "13", "2", "1"
+            remainder = bill_number[match.end():]  # Everything after the number
+            
+            # Pad number to 3 digits
+            padded_number = number.zfill(3)
+            
+            return f"{prefix} {padded_number}{remainder}"
+        
+        # If no match, return original
+        return bill_number
     
     def get_existing_ids(self):
         """Get legislation IDs that are already in the sheet"""
@@ -252,7 +289,7 @@ if __name__ == "__main__":
             f.write(service_account)
         service_account = '/tmp/service-account.json'
     
-    spreadsheet_name = "Delaware Legislation - GA 153"
+    spreadsheet_name = "DE WFP Bill Tracker GA 153"
     
     scraper = DelawareLegislationScraper(service_account, spreadsheet_name)
     scraper.run()
