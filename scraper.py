@@ -28,13 +28,13 @@ class DelawareLegislationScraper:
         
         # Open or create spreadsheet
         try:
-            self.spreadsheet = self.gc.open("DE WFP Bill Tracker GA 153")
+            self.spreadsheet = self.gc.open(spreadsheet_name)
             self.sheet = self.spreadsheet.sheet1
-            print(f"Opened existing spreadsheet: {"DE WFP Bill Tracker GA 153"}")
+            print(f"Opened existing spreadsheet: {spreadsheet_name}")
         except gspread.SpreadsheetNotFound:
-            self.spreadsheet = self.gc.create("DE WFP Bill Tracker GA 153")
+            self.spreadsheet = self.gc.create(spreadsheet_name)
             self.sheet = self.spreadsheet.sheet1
-            print(f"Created new spreadsheet: {"DE WFP Bill Tracker GA 153"}")
+            print(f"Created new spreadsheet: {spreadsheet_name}")
     
     def fetch_all_bills(self, ga_id=153, page_size=100):
         """Fetch all bills from GA 153 across multiple pages"""
@@ -185,37 +185,44 @@ class DelawareLegislationScraper:
         # If no match, return original
         return bill_number
     
-    def get_existing_ids(self):
-        """Get legislation IDs that are already in the sheet"""
+    def get_existing_bills(self):
+        """Get all existing bills from the sheet as a dictionary"""
         try:
             # Get all values
             all_values = self.sheet.get_all_values()
             
-            # If empty or only headers, return empty set
+            # If empty or only headers, return empty dict
             if len(all_values) <= 1:
-                return set()
+                return {}
             
-            # Find LegislationId column
+            # Get headers and find LegislationId column
             headers = all_values[0]
             if "LegislationId" not in headers:
-                return set()
+                return {}
             
             id_col_index = headers.index("LegislationId")
             
-            # Extract all IDs (skip header row)
-            existing_ids = set()
-            for row in all_values[1:]:
+            # Build dictionary: {LegislationId: (row_number, row_data_dict)}
+            existing_bills = {}
+            for row_num, row in enumerate(all_values[1:], start=2):  # Start at 2 (row 1 is headers)
                 if len(row) > id_col_index and row[id_col_index]:
-                    existing_ids.add(str(row[id_col_index]))
+                    leg_id = str(row[id_col_index])
+                    
+                    # Convert row to dictionary
+                    row_dict = {}
+                    for i, header in enumerate(headers):
+                        row_dict[header] = row[i] if i < len(row) else ""
+                    
+                    existing_bills[leg_id] = (row_num, row_dict)
             
-            return existing_ids
+            return existing_bills
         
         except Exception as e:
-            print(f"Error getting existing IDs: {e}")
-            return set()
+            print(f"Error getting existing bills: {e}")
+            return {}
     
-    def write_to_sheet(self, bills, existing_ids):
-        """Write bill data to Google Sheet efficiently"""
+    def write_to_sheet(self, bills, existing_bills):
+        """Write bill data to Google Sheet efficiently - add new and update changed bills"""
         # Define column headers - removed SponsorLink
         headers = [
             "LegislationId", "SortBy", "BillNumber", "DisplayCode", "Type",
@@ -232,25 +239,69 @@ class DelawareLegislationScraper:
             self.sheet.append_row(headers)
             print("Created headers")
         
-        # Filter to only new bills
-        new_bills = [
-            bill for bill in bills 
-            if str(bill["LegislationId"]) not in existing_ids
-        ]
+        # Separate new bills from existing bills
+        new_bills = []
+        bills_to_update = []
         
-        if not new_bills:
+        for bill in bills:
+            leg_id = str(bill["LegislationId"])
+            
+            if leg_id not in existing_bills:
+                # Brand new bill
+                new_bills.append(bill)
+            else:
+                # Bill exists - check if data has changed
+                row_num, existing_data = existing_bills[leg_id]
+                
+                # Compare data (skip DisplayCode since it's a formula)
+                has_changes = False
+                for header in headers:
+                    if header == "DisplayCode":
+                        continue  # Skip formula comparison
+                    
+                    new_value = str(bill.get(header, ""))
+                    old_value = str(existing_data.get(header, ""))
+                    
+                    if new_value != old_value:
+                        has_changes = True
+                        break
+                
+                if has_changes:
+                    bills_to_update.append((row_num, bill))
+        
+        # Append new bills
+        if new_bills:
+            rows = []
+            for bill in new_bills:
+                row = [bill.get(header, "") for header in headers]
+                rows.append(row)
+            
+            self.sheet.append_rows(rows, value_input_option='USER_ENTERED')
+            print(f"✓ Added {len(rows)} new bills")
+        else:
             print("No new bills to add")
-            return
         
-        # Convert to rows - use value_input_option='USER_ENTERED' for formulas
-        rows = []
-        for bill in new_bills:
-            row = [bill.get(header, "") for header in headers]
-            rows.append(row)
-        
-        # Batch append with USER_ENTERED to allow formulas
-        self.sheet.append_rows(rows, value_input_option='USER_ENTERED')
-        print(f"Added {len(rows)} new bills")
+        # Update existing bills
+        if bills_to_update:
+            for row_num, bill in bills_to_update:
+                row = [bill.get(header, "") for header in headers]
+                
+                # Update the entire row
+                range_name = f"A{row_num}:{self._col_letter(len(headers))}{row_num}"
+                self.sheet.update(range_name, [row], value_input_option='USER_ENTERED')
+            
+            print(f"✓ Updated {len(bills_to_update)} existing bills")
+        else:
+            print("No bills needed updates")
+    
+    def _col_letter(self, col_num):
+        """Convert column number to letter (1=A, 2=B, ..., 27=AA)"""
+        result = ""
+        while col_num > 0:
+            col_num -= 1
+            result = chr(col_num % 26 + ord('A')) + result
+            col_num //= 26
+        return result
     
     def run(self):
         """Main execution method"""
@@ -266,16 +317,16 @@ class DelawareLegislationScraper:
         transformed_bills = [self.transform_bill(bill) for bill in bills]
         print(f"Transformed {len(transformed_bills)} bills")
         
-        # Get existing IDs
+        # Get existing bills
         print("Checking for existing bills in sheet...")
-        existing_ids = self.get_existing_ids()
-        print(f"Found {len(existing_ids)} existing bills")
+        existing_bills = self.get_existing_bills()
+        print(f"Found {len(existing_bills)} existing bills")
         
         # Write to sheet
         print("Writing to Google Sheet...")
-        self.write_to_sheet(transformed_bills, existing_ids)
+        self.write_to_sheet(transformed_bills, existing_bills)
         
-        print(f"Scraper completed at {datetime.now()}")
+        print(f"\nScraper completed at {datetime.now()}")
         print(f"Total bills processed: {len(bills)}")
 
 
