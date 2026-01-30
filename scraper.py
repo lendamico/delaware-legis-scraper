@@ -30,11 +30,11 @@ class DelawareLegislationScraper:
         try:
             self.spreadsheet = self.gc.open("DE WFP Bill Tracker GA 153")
             self.sheet = self.spreadsheet.sheet1
-            print(f"Opened existing spreadsheet: DE WFP Bill Tracker GA 153")
+            print(f"Opened existing spreadsheet: {"DE WFP Bill Tracker GA 153"}")
         except gspread.SpreadsheetNotFound:
             self.spreadsheet = self.gc.create("DE WFP Bill Tracker GA 153")
             self.sheet = self.spreadsheet.sheet1
-            print(f"Created new spreadsheet: DE WFP Bill Tracker GA 153")
+            print(f"Created new spreadsheet: {"DE WFP Bill Tracker GA 153"}")
     
     def fetch_all_bills(self, ga_id=153, page_size=100):
         """Fetch all bills from GA 153 across multiple pages"""
@@ -109,16 +109,49 @@ class DelawareLegislationScraper:
             print(f"Error parsing date '{json_date}': {e}")
             return ""
     
+    def get_legislation_type_name(self, type_id):
+        """Convert legislation type ID to human-readable name"""
+        type_mapping = {
+            1: "Bill",
+            2: "Resolution",
+            3: "Concurrent Resolution",
+            4: "Joint Resolution",
+            5: "Amendment",
+            6: "Substitute"
+        }
+        return type_mapping.get(type_id, f"Unknown ({type_id})")
+    
     def transform_bill(self, bill):
         """Transform API response into sheet-ready format"""
+        bill_number = bill.get("LegislationNumber")
+        legislation_id = bill.get("LegislationId")
+        parent_bill = bill.get("SubstituteParentLegislationDisplayCode") or ""
+        amendment_parent = bill.get("AmendmentParentLegislationDisplayCode") or ""
+        legislation_display_code = bill.get("LegislationDisplayCode")
+        
+        # Determine Sort By value
+        if parent_bill:
+            sort_by = parent_bill
+        elif amendment_parent:
+            sort_by = amendment_parent
+        else:
+            sort_by = bill_number
+        
+        # Normalize the Sort By value for proper sorting (e.g., HB 13 -> HB 013)
+        sort_by_normalized = self.normalize_bill_number(sort_by)
+        
+        # Create clickable link using Google Sheets HYPERLINK formula
+        bill_url = f"https://legis.delaware.gov/BillDetail?LegislationId={legislation_id}"
+        bill_link = f'=HYPERLINK("{bill_url}", "{legislation_display_code}")'
+        
         return {
-            "LegislationId": bill.get("LegislationId"),
-            "BillNumber": bill.get("LegislationNumber"),
-            "DisplayCode": bill.get("LegislationDisplayCode"),
-            "Type": bill.get("LegislationTypeId"),
+            "LegislationId": legislation_id,
+            "SortBy": sort_by_normalized,
+            "BillNumber": bill_number,
+            "DisplayCode": bill_link,
+            "Type": self.get_legislation_type_name(bill.get("LegislationTypeId")),
             "Chamber": bill.get("ChamberName"),
             "Sponsor": bill.get("Sponsor"),
-            "SponsorLink": bill.get("LegislatorDetailLink"),
             "ShortTitle": bill.get("ShortTitle") or "",
             "LongTitle": bill.get("LongTitle") or "",
             "Synopsis": bill.get("Synopsis") or "",
@@ -126,9 +159,31 @@ class DelawareLegislationScraper:
             "IntroducedDate": self.parse_json_date(bill.get("IntroductionDateTime")),
             "LastStatusDate": self.parse_json_date(bill.get("LegislationStatusDateTime")),
             "HasAmendments": bill.get("HasAmendments"),
-            "ParentBill": bill.get("SubstituteParentLegislationDisplayCode") or "",
-            "AmendmentParent": bill.get("AmendmentParentLegislationDisplayCode") or ""
+            "ParentBill": parent_bill,
+            "AmendmentParent": amendment_parent
         }
+    
+    def normalize_bill_number(self, bill_number):
+        """Normalize bill number for sorting (e.g., HB 13 -> HB 013)"""
+        if not bill_number:
+            return ""
+        
+        import re
+        # Match pattern like "HB 13" or "SA 2" or "HS 1 for HB 100"
+        match = re.match(r'^([A-Z]+)\s+(\d+)', bill_number)
+        
+        if match:
+            prefix = match.group(1)  # e.g., "HB", "SA", "HS"
+            number = match.group(2)  # e.g., "13", "2", "1"
+            remainder = bill_number[match.end():]  # Everything after the number
+            
+            # Pad number to 3 digits
+            padded_number = number.zfill(3)
+            
+            return f"{prefix} {padded_number}{remainder}"
+        
+        # If no match, return original
+        return bill_number
     
     def get_existing_ids(self):
         """Get legislation IDs that are already in the sheet"""
@@ -161,10 +216,10 @@ class DelawareLegislationScraper:
     
     def write_to_sheet(self, bills, existing_ids):
         """Write bill data to Google Sheet efficiently"""
-        # Define column headers
+        # Define column headers - removed SponsorLink
         headers = [
-            "LegislationId", "BillNumber", "DisplayCode", "Type",
-            "Chamber", "Sponsor", "SponsorLink", "ShortTitle",
+            "LegislationId", "SortBy", "BillNumber", "DisplayCode", "Type",
+            "Chamber", "Sponsor", "ShortTitle",
             "LongTitle", "Synopsis", "Status", "IntroducedDate",
             "LastStatusDate", "HasAmendments", "ParentBill", "AmendmentParent"
         ]
@@ -187,14 +242,14 @@ class DelawareLegislationScraper:
             print("No new bills to add")
             return
         
-        # Convert to rows
+        # Convert to rows - use value_input_option='USER_ENTERED' for formulas
         rows = []
         for bill in new_bills:
             row = [bill.get(header, "") for header in headers]
             rows.append(row)
         
-        # Batch append
-        self.sheet.append_rows(rows)
+        # Batch append with USER_ENTERED to allow formulas
+        self.sheet.append_rows(rows, value_input_option='USER_ENTERED')
         print(f"Added {len(rows)} new bills")
     
     def run(self):
@@ -234,7 +289,7 @@ if __name__ == "__main__":
             f.write(service_account)
         service_account = '/tmp/service-account.json'
     
-    spreadsheet_name = "Delaware Legislation - GA 153"
+    spreadsheet_name = "DE WFP Bill Tracker GA 153"
     
     scraper = DelawareLegislationScraper(service_account, spreadsheet_name)
     scraper.run()
