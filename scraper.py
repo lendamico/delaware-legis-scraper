@@ -223,12 +223,12 @@ class DelawareLegislationScraper:
     
     def write_to_sheet(self, bills, existing_bills):
         """Write bill data to Google Sheet efficiently - add new and update changed bills"""
-        # Define column headers - removed SponsorLink
+        # Define column headers in desired order
         headers = [
-            "LegislationId", "SortBy", "BillNumber", "DisplayCode", "Type",
-            "Chamber", "Sponsor", "ShortTitle",
-            "LongTitle", "Synopsis", "Status", "IntroducedDate",
-            "LastStatusDate", "HasAmendments", "ParentBill", "AmendmentParent"
+            "LegislationId", "DisplayCode", "SortBy", "ShortTitle",
+            "LongTitle", "Synopsis", "Type", "IntroducedDate",
+            "Sponsor", "Chamber", "Status", "LastStatusDate",
+            "HasAmendments", "ParentBill", "AmendmentParent"
         ]
         
         # Check if sheet is empty
