@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      padding: 20px;
+    }
+    .button-container {
+      display: flex;
+      flex-direction: column;
+      gap: 15px;
+      margin-top: 20px;
+    }
+    button {
+      padding: 12px 20px;
+      font-size: 14px;
+      cursor: pointer;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      background-color: #f8f9fa;
+      transition: background-color 0.2s;
+    }
+    button:hover {
+      background-color: #e9ecef;
+    }
+    button:active {
+      background-color: #dee2e6;
+    }
+    .primary-button {
+      background-color: #4285f4;
+      color: white;
+      border: none;
+    }
+    .primary-button:hover {
+      background-color: #3367d6;
+    }
+    .status {
+      margin-top: 15px;
+      padding: 10px;
+      border-radius: 4px;
+      display: none;
+    }
+    .status.success {
+      background-color: #d4edda;
+      color: #155724;
+      border: 1px solid #c3e6cb;
+    }
+    .status.error {
+      background-color: #f8d7da;
+      color: #721c24;
+      border: 1px solid #f5c6cb;
+    }
+    .status.loading {
+      background-color: #d1ecf1;
+      color: #0c5460;
+      border: 1px solid #bee5eb;
+    }
+    #urlInput {
+      display: none;
+      margin-top: 15px;
+    }
+    input[type="text"] {
+      width: 100%;
+      padding: 8px;
+      margin-top: 8px;
+      margin-bottom: 10px;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      box-sizing: border-box;
+      font-size: 13px;
+    }
+    .help-text {
+      font-size: 12px;
+      color: #666;
+      margin-top: 5px;
+    }
+    .back-button {
+      background-color: #6c757d;
+      color: white;
+      border: none;
+      margin-top: 10px;
+    }
+    .back-button:hover {
+      background-color: #5a6268;
+    }
+  </style>
+</head>
+<body>
+  <div id="mainView">
+    <p>Choose how to export your selected bills:</p>
+    
+    <div class="button-container">
+      <button class="primary-button" onclick="createNew()">Create New Document</button>
+      <button onclick="showUrlInput()">Append to Existing Document</button>
+    </div>
+    
+    <div id="status" class="status"></div>
+  </div>
+
+  <div id="urlInput">
+    <p><strong>Append to Existing Document</strong></p>
+    <p class="help-text">Paste the URL of the Google Doc you want to append to:</p>
+    <input type="text" id="docUrl" placeholder="https://docs.google.com/document/d/...">
+    <p class="help-text">You can find this URL by opening the doc and copying it from your browser's address bar.</p>
+    
+    <div class="button-container">
+      <button class="primary-button" onclick="appendWithUrl()">Append to Document</button>
+      <button class="back-button" onclick="showMainView()">← Back</button>
+    </div>
+  </div>
+
+  <script>
+    // Show URL input view
+    function showUrlInput() {
+      document.getElementById('mainView').style.display = 'none';
+      document.getElementById('urlInput').style.display = 'block';
+      document.getElementById('status').style.display = 'none';
+    }
+    
+    // Show main view
+    function showMainView() {
+      document.getElementById('mainView').style.display = 'block';
+      document.getElementById('urlInput').style.display = 'none';
+      document.getElementById('status').style.display = 'none';
+      document.getElementById('docUrl').value = '';
+    }
+    
+    // Create new document
+    function createNew() {
+      showStatus('Creating new document...', 'loading');
+      
+      google.script.run
+        .withSuccessHandler(onCreateSuccess)
+        .withFailureHandler(onError)
+        .createNewDoc();
+    }
+    
+    // Append to existing document using URL
+    function appendWithUrl() {
+      const urlInput = document.getElementById('docUrl');
+      const url = urlInput.value.trim();
+      
+      if (!url) {
+        showStatus('Please enter a document URL', 'error');
+        return;
+      }
+      
+      // Extract document ID from URL
+      const docId = extractDocId(url);
+      
+      if (!docId) {
+        showStatus('Invalid Google Docs URL. Please check and try again.', 'error');
+        return;
+      }
+      
+      showStatus('Appending to document...', 'loading');
+      
+      google.script.run
+        .withSuccessHandler(onAppendSuccess)
+        .withFailureHandler(onError)
+        .appendToDoc(docId);
+    }
+    
+    // Extract document ID from various Google Docs URL formats
+    function extractDocId(url) {
+      // Format: https://docs.google.com/document/d/DOC_ID/edit...
+      const match = url.match(/\/d\/([a-zA-Z0-9-_]+)/);
+      return match ? match[1] : null;
+    }
+    
+    // Success handler for create new
+    function onCreateSuccess(result) {
+      if (result.success) {
+        showMainView();
+        showStatus(
+          `✓ Success! Created "${result.docName}" with ${result.billCount} bill(s). ` +
+          `<a href="${result.docUrl}" target="_blank">Open document</a>`,
+          'success'
+        );
+      } else {
+        showStatus('⚠ ' + (result.error || 'No bills were selected'), 'error');
+      }
+    }
+    
+    // Success handler for append
+    function onAppendSuccess(result) {
+      if (result.success) {
+        showMainView();
+        showStatus(
+          `✓ Success! Appended ${result.billCount} bill(s) to "${result.docName}". ` +
+          `<a href="${result.docUrl}" target="_blank">Open document</a>`,
+          'success'
+        );
+      } else {
+        showStatus('⚠ ' + (result.error || 'No bills were selected'), 'error');
+      }
+    }
+    
+    // Error handler
+    function onError(error) {
+      showStatus('✗ Error: ' + error.message, 'error');
+    }
+    
+    // Show status message
+    function showStatus(message, type) {
+      const statusDiv = document.getElementById('status');
+      statusDiv.innerHTML = message;
+      statusDiv.className = 'status ' + type;
+      statusDiv.style.display = 'block';
+    }
+  </script>
+</body>
+</html>

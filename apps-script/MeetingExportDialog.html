@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      padding: 20px;
+    }
+    .input-group {
+      margin-bottom: 15px;
+    }
+    label {
+      display: block;
+      margin-bottom: 5px;
+      font-weight: bold;
+    }
+    input[type="text"] {
+      width: 100%;
+      padding: 8px;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      box-sizing: border-box;
+      font-size: 13px;
+    }
+    .help-text {
+      font-size: 12px;
+      color: #666;
+      margin-top: 5px;
+    }
+    .button-container {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      margin-top: 20px;
+    }
+    button {
+      padding: 12px 20px;
+      font-size: 14px;
+      cursor: pointer;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      background-color: #f8f9fa;
+      transition: background-color 0.2s;
+    }
+    button:hover {
+      background-color: #e9ecef;
+    }
+    .primary-button {
+      background-color: #4285f4;
+      color: white;
+      border: none;
+    }
+    .primary-button:hover {
+      background-color: #3367d6;
+    }
+    .status {
+      margin-top: 15px;
+      padding: 10px;
+      border-radius: 4px;
+      display: none;
+    }
+    .status.success {
+      background-color: #d4edda;
+      color: #155724;
+      border: 1px solid #c3e6cb;
+    }
+    .status.error {
+      background-color: #f8d7da;
+      color: #721c24;
+      border: 1px solid #f5c6cb;
+    }
+    .status.loading {
+      background-color: #d1ecf1;
+      color: #0c5460;
+      border: 1px solid #bee5eb;
+    }
+    #docUrlInput {
+      display: none;
+    }
+    .back-button {
+      background-color: #6c757d;
+      color: white;
+      border: none;
+    }
+    .back-button:hover {
+      background-color: #5a6268;
+    }
+  </style>
+</head>
+<body>
+  <div id="meetingUrlView">
+    <div class="input-group">
+      <label for="meetingUrl">Meeting Notice URL:</label>
+      <input type="text" id="meetingUrl" placeholder="https://legis.delaware.gov/MeetingNotice/33615">
+      <p class="help-text">Paste the URL from a Delaware legislative meeting notice page</p>
+    </div>
+    
+    <div class="button-container">
+      <button class="primary-button" onclick="createNewWithMeeting()">Create New Document</button>
+      <button onclick="showDocUrlInput()">Append to Existing Document</button>
+    </div>
+    
+    <div id="status" class="status"></div>
+  </div>
+
+  <div id="docUrlInput">
+    <div class="input-group">
+      <label for="docUrl">Google Doc URL:</label>
+      <input type="text" id="docUrl" placeholder="https://docs.google.com/document/d/...">
+      <p class="help-text">Paste the URL of the Google Doc you want to append to</p>
+    </div>
+    
+    <div class="button-container">
+      <button class="primary-button" onclick="appendWithMeeting()">Append to Document</button>
+      <button class="back-button" onclick="showMeetingUrlView()">← Back</button>
+    </div>
+  </div>
+
+  <script>
+    function showDocUrlInput() {
+      document.getElementById('meetingUrlView').style.display = 'none';
+      document.getElementById('docUrlInput').style.display = 'block';
+      document.getElementById('status').style.display = 'none';
+    }
+    
+    function showMeetingUrlView() {
+      document.getElementById('meetingUrlView').style.display = 'block';
+      document.getElementById('docUrlInput').style.display = 'none';
+      document.getElementById('status').style.display = 'none';
+      document.getElementById('docUrl').value = '';
+    }
+    
+    function createNewWithMeeting() {
+      const meetingUrl = document.getElementById('meetingUrl').value.trim();
+      
+      if (!meetingUrl) {
+        showStatus('Please enter a meeting URL', 'error');
+        return;
+      }
+      
+      showStatus('Fetching meeting data and creating document...', 'loading');
+      
+      google.script.run
+        .withSuccessHandler(onSuccess)
+        .withFailureHandler(onError)
+        .createNewDocWithMeeting(meetingUrl);
+    }
+    
+    function appendWithMeeting() {
+      const meetingUrl = document.getElementById('meetingUrl').value.trim();
+      const docUrl = document.getElementById('docUrl').value.trim();
+      
+      if (!meetingUrl) {
+        showMeetingUrlView();
+        showStatus('Please enter a meeting URL', 'error');
+        return;
+      }
+      
+      if (!docUrl) {
+        showStatus('Please enter a document URL', 'error');
+        return;
+      }
+      
+      const docId = extractDocId(docUrl);
+      if (!docId) {
+        showStatus('Invalid Google Docs URL. Please check and try again.', 'error');
+        return;
+      }
+      
+      showStatus('Fetching meeting data and appending to document...', 'loading');
+      
+      google.script.run
+        .withSuccessHandler(onSuccess)
+        .withFailureHandler(onError)
+        .appendToDocWithMeeting(docId, meetingUrl);
+    }
+    
+    function extractDocId(url) {
+      const match = url.match(/\/d\/([a-zA-Z0-9-_]+)/);
+      return match ? match[1] : null;
+    }
+    
+    function onSuccess(result) {
+      if (result.success) {
+        showMeetingUrlView();
+        showStatus(
+          `✓ Success! Exported ${result.billCount} bill(s) to "${result.docName}". ` +
+          `<a href="${result.docUrl}" target="_blank">Open document</a>`,
+          'success'
+        );
+      } else {
+        showStatus('⚠ Error: ' + (result.error || 'Unknown error'), 'error');
+      }
+    }
+    
+    function onError(error) {
+      showStatus('✗ Error: ' + error.message, 'error');
+    }
+    
+    function showStatus(message, type) {
+      const statusDiv = document.getElementById('status');
+      statusDiv.innerHTML = message;
+      statusDiv.className = 'status ' + type;
+      statusDiv.style.display = 'block';
+    }
+  </script>
+</body>
+</html>
