@@ -158,7 +158,7 @@ class DelawareLegislationScraper:
             "Status": bill.get("StatusName"),
             "IntroducedDate": self.parse_json_date(bill.get("IntroductionDateTime")),
             "LastStatusDate": self.parse_json_date(bill.get("LegislationStatusDateTime")),
-            "HasAmendments": bill.get("HasAmendments"),
+            "HasAmendments": "TRUE" if bill.get("HasAmendments") else "FALSE",  # Convert to uppercase to match Sheets
             "ParentBill": parent_bill,
             "AmendmentParent": amendment_parent
         }
