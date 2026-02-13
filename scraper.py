@@ -191,22 +191,34 @@ class DelawareLegislationScraper:
             # Get all values
             all_values = self.sheet.get_all_values()
             
-            # If empty or only headers, return empty dict
-            if len(all_values) <= 1:
+            print(f"Sheet has {len(all_values)} rows total")
+            
+            # If empty, create headers and return empty dict
+            if len(all_values) == 0:
+                print("Sheet is completely empty")
+                return {}
+
+            # If only headers exist, return empty dict
+            if len(all_values) == 1:
+                print("Sheet has only headers")
                 return {}
             
             # Get headers and find LegislationId column
             headers = all_values[0]
+            print(f"Headers: {headers}")
+
             if "LegislationId" not in headers:
+                print("WARNING: LegislationId column not found!")
                 return {}
             
             id_col_index = headers.index("LegislationId")
+            print(f"LegislationId is in column {id_col_index}")
             
             # Build dictionary: {LegislationId: (row_number, row_data_dict)}
             existing_bills = {}
             for row_num, row in enumerate(all_values[1:], start=2):  # Start at 2 (row 1 is headers)
                 if len(row) > id_col_index and row[id_col_index]:
-                    leg_id = str(row[id_col_index])
+                    leg_id = str(row[id_col_index]).strip()
                     
                     # Convert row to dictionary
                     row_dict = {}
@@ -215,10 +227,13 @@ class DelawareLegislationScraper:
                     
                     existing_bills[leg_id] = (row_num, row_dict)
             
+            print(f"Found {len(existing_bills)} existing bills")
             return existing_bills
         
         except Exception as e:
             print(f"Error getting existing bills: {e}")
+            import traceback
+            traceback.print_exc()   
             return {}
     
     def write_to_sheet(self, bills, existing_bills):
@@ -244,7 +259,7 @@ class DelawareLegislationScraper:
         bills_to_update = []
         
         for bill in bills:
-            leg_id = str(bill["LegislationId"])
+            leg_id = str(bill["LegislationId"]).strip()
             
             if leg_id not in existing_bills:
                 # Brand new bill
