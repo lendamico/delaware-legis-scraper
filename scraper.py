@@ -370,6 +370,13 @@ class DelawareLegislationScraper:
                 # Calculate the starting row (after existing data)
                 current_rows = len(all_values)
                 start_row = current_rows + 1
+                rows_needed = start_row + len(rows) - 1
+                # Check if we need more rows
+                current_max_rows = self.sheet.row_count
+                if rows_needed > current_max_rows:
+                    print(f"Sheet only has {current_max_rows} rows, need {rows_needed}. Expanding...")
+                    self.sheet.add_rows(rows_needed - current_max_rows)
+                    print(f"✓ Expanded sheet to {rows_needed} rows")
                 end_col = self._col_letter(len(internal_keys))
                 range_name = f"A{start_row}:{end_col}"
                 
