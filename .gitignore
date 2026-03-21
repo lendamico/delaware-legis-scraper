@@ -4,4 +4,6 @@ venv/
 __pycache__/
 *.pyc
 .env
-
+.claude
+CLAUDE.md
+Docs
