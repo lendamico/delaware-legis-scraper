@@ -210,12 +210,12 @@ class DelawareLegislationScraper:
             # If empty, return empty dict
             if len(all_values) == 0:
                 print("Sheet is completely empty")
-                return {}
-            
+                return {}, 0
+
             # If only headers, return empty dict
             if len(all_values) == 1:
                 print("Sheet has only headers")
-                return {}
+                return {}, 1
             
             # Get headers and find LegislationId column
             headers = all_values[0]
@@ -253,15 +253,15 @@ class DelawareLegislationScraper:
                         existing_bills[leg_id] = (row_num, row_dict)
             
             print(f"\nFound {len(existing_bills)} existing bills")
-            return existing_bills
-        
+            return existing_bills, len(all_values)
+
         except Exception as e:
             print(f"ERROR in get_existing_bills: {e}")
             import traceback
             traceback.print_exc()
-            return {}
+            return {}, 0
     
-    def write_to_sheet(self, bills, existing_bills):
+    def write_to_sheet(self, bills, existing_bills, row_count):
         """Write bill data to Google Sheet efficiently - add new and update changed bills"""
         print(f"\n=== WRITE_TO_SHEET DEBUG ===")
         print(f"Received {len(bills)} bills to process")
@@ -298,16 +298,14 @@ class DelawareLegislationScraper:
         # Sheet column names in the same order
         headers = [header_mapping[key] for key in internal_keys]
         
-        # Check if sheet is empty
-        all_values = self.sheet.get_all_values()
-        print(f"Sheet currently has {len(all_values)} rows")
-        
-        if not all_values:
+        print(f"Sheet currently has {row_count} rows")
+
+        if row_count == 0:
             # Write headers
             print("Sheet is empty, writing headers...")
             self.sheet.append_row(headers)
             print("✓ Headers written")
-            all_values = [headers]  # Update all_values so we know headers exist
+            row_count = 1
         
         # Separate new bills from existing bills
         new_bills = []
@@ -382,7 +380,7 @@ class DelawareLegislationScraper:
                 print("Calling sheet.append_rows()...")
                 
                 # Calculate the starting row (after existing data)
-                current_rows = len(all_values)
+                current_rows = row_count
                 start_row = current_rows + 1
                 rows_needed = start_row + len(rows) - 1
                 # Check if we need more rows
@@ -476,12 +474,12 @@ class DelawareLegislationScraper:
         
         # Get existing bills
         print("\n=== Checking for existing bills in sheet ===")
-        existing_bills = self.get_existing_bills()
+        existing_bills, row_count = self.get_existing_bills()
         print(f"Found {len(existing_bills)} existing bills in sheet")
-        
+
         # Write to sheet
         print("\n=== Writing to Google Sheet ===")
-        self.write_to_sheet(transformed_bills, existing_bills)
+        self.write_to_sheet(transformed_bills, existing_bills, row_count)
         
         print(f"\n=== Scraper completed at {datetime.now()} ===")
         print(f"Spreadsheet URL: {self.spreadsheet.url}")
