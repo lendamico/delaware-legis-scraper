@@ -216,13 +216,6 @@ function appendToDocWithMeeting(docId, meetingUrl) {
     const doc = DocumentApp.openById(docId);
     writeMeetingSections(doc.getBody(), meeting, bills, true);
 
-    // FINAL fallback: scrape HTML if APIs failed
-    if (!meetingDateTime) {
-      try {
-        meetingDateTime = scrapeMeetingDateTimeFromHtml(meetingUrl);
-      } catch (_) {}
-    } 
-
     return {
       success: true,
       docUrl: doc.getUrl(),

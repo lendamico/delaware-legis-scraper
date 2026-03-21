@@ -1,10 +1,11 @@
 import requests
 import gspread
 from google.oauth2.service_account import Credentials
-from datetime import datetime
+from datetime import datetime, timezone
 import time
 import os
 import math
+import re
 
 class DelawareLegislationScraper:
     def __init__(self, service_account_path, spreadsheet_name):
@@ -93,15 +94,17 @@ class DelawareLegislationScraper:
         
         try:
             # Extract timestamp from "/Date(1747153160257)/"
-            timestamp_str = json_date.strip("/Date()")
-            timestamp = int(timestamp_str)
-            
+            m = re.match(r'/Date\((-?\d+)\)/', json_date)
+            if not m:
+                return ""
+            timestamp = int(m.group(1))
+
             # Convert milliseconds to seconds
             timestamp_seconds = timestamp / 1000
-            
-            # Convert to datetime
-            dt = datetime.fromtimestamp(timestamp_seconds)
-            
+
+            # Convert to datetime in UTC to match GitHub Actions environment
+            dt = datetime.fromtimestamp(timestamp_seconds, tz=timezone.utc)
+
             # Format as YYYY-MM-DD
             return dt.strftime("%Y-%m-%d")
         
@@ -168,7 +171,6 @@ class DelawareLegislationScraper:
         if not bill_number:
             return ""
         
-        import re
         # Match pattern like "HB 13" or "SA 2" or "HS 1 for HB 100"
         match = re.match(r'^([A-Z]+)\s+(\d+)', bill_number)
         
