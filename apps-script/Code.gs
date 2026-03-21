@@ -153,6 +153,10 @@ function fetchMeetingData(meetingUrl) {
     'Meeting items'
   );
 
+  if (!items.Data || items.Data.length === 0) {
+    throw new Error('No bills found for this meeting.');
+  }
+
   const first = items.Data[0];
   const committeeId = first.CommitteeId;
   
