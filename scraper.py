@@ -37,6 +37,20 @@ class DelawareLegislationScraper:
             self.sheet = self.spreadsheet.sheet1
             print(f"Created new spreadsheet: {spreadsheet_name}")
     
+    def _post_with_retry(self, url, headers, data, retries=3, backoff=2):
+        """POST with exponential backoff retry on transient errors."""
+        for attempt in range(1, retries + 1):
+            response = requests.post(url, headers=headers, data=data)
+            if response.status_code < 500:
+                response.raise_for_status()
+                return response
+            if attempt < retries:
+                wait = backoff ** attempt
+                print(f"Server error {response.status_code} on attempt {attempt}/{retries}, retrying in {wait}s...")
+                time.sleep(wait)
+            else:
+                response.raise_for_status()
+
     def fetch_all_bills(self, ga_id=153, page_size=100):
         """Fetch all bills from GA 153 across multiple pages"""
         bills = []
@@ -57,10 +71,9 @@ class DelawareLegislationScraper:
             "coSponsorCheck": False
         }
         
-        response = requests.post(self.api_url, headers=self.headers, data=data)
-        response.raise_for_status()
+        response = self._post_with_retry(self.api_url, self.headers, data)
         result = response.json()
-        
+
         total = result['Total']
         bills.extend(result['Data'])
         print(f"Total bills: {total}")
@@ -75,8 +88,7 @@ class DelawareLegislationScraper:
             print(f"Fetching page {page}/{total_pages}...")
             data["page"] = page
             
-            response = requests.post(self.api_url, headers=self.headers, data=data)
-            response.raise_for_status()
+            response = self._post_with_retry(self.api_url, self.headers, data)
             result = response.json()
             
             bills.extend(result['Data'])
