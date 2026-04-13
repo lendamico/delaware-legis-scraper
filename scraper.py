@@ -16,7 +16,8 @@ class DelawareLegislationScraper:
             "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
             "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15",
             "Referer": "https://legis.delaware.gov/AllLegislation",
-            "Accept": "*/*"
+            "Accept": "application/json, text/javascript, */*; q=0.01",
+            "X-Requested-With": "XMLHttpRequest",
         }
         
         # Initialize Google Sheets
@@ -42,6 +43,15 @@ class DelawareLegislationScraper:
         for attempt in range(1, retries + 1):
             response = requests.post(url, headers=headers, data=data)
             if response.status_code < 500:
+                if not response.text.strip():
+                    if attempt < retries:
+                        wait = backoff ** attempt
+                        print(f"Empty response on attempt {attempt}/{retries}, retrying in {wait}s...")
+                        time.sleep(wait)
+                        continue
+                    raise requests.exceptions.RequestException(
+                        f"API returned empty body after {retries} attempts (status {response.status_code})"
+                    )
                 response.raise_for_status()
                 return response
             if attempt < retries:
@@ -72,7 +82,11 @@ class DelawareLegislationScraper:
         }
         
         response = self._post_with_retry(self.api_url, self.headers, data)
-        result = response.json()
+        try:
+            result = response.json()
+        except requests.exceptions.JSONDecodeError:
+            print(f"Failed to parse JSON. Status: {response.status_code}, Body: {response.text[:500]!r}")
+            raise
 
         total = result['Total']
         bills.extend(result['Data'])
@@ -89,8 +103,12 @@ class DelawareLegislationScraper:
             data["page"] = page
             
             response = self._post_with_retry(self.api_url, self.headers, data)
-            result = response.json()
-            
+            try:
+                result = response.json()
+            except requests.exceptions.JSONDecodeError:
+                print(f"Failed to parse JSON on page {page}. Status: {response.status_code}, Body: {response.text[:500]!r}")
+                raise
+
             bills.extend(result['Data'])
             print(f"Got {len(result['Data'])} bills from page {page}")
             
