@@ -12,13 +12,20 @@ class DelawareLegislationScraper:
         """Initialize the scraper with Google Sheets credentials."""
         # Initialize API settings
         self.api_url = "https://legis.delaware.gov/json/AllLegislation/GetAllLegislation"
+        self.base_url = "https://legis.delaware.gov/AllLegislation"
         self.headers = {
             "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
-            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15",
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
             "Referer": "https://legis.delaware.gov/AllLegislation",
             "Accept": "application/json, text/javascript, */*; q=0.01",
+            "Accept-Language": "en-US,en;q=0.9",
             "X-Requested-With": "XMLHttpRequest",
         }
+        self.session = requests.Session()
+        self.session.headers.update({
+            "User-Agent": self.headers["User-Agent"],
+            "Accept-Language": "en-US,en;q=0.9",
+        })
         
         # Initialize Google Sheets
         scopes = [
@@ -38,10 +45,16 @@ class DelawareLegislationScraper:
             self.sheet = self.spreadsheet.sheet1
             print(f"Created new spreadsheet: {spreadsheet_name}")
     
+    def _warm_session(self):
+        """GET the AllLegislation page to establish session cookies before AJAX calls."""
+        print("Warming session (GET AllLegislation page)...")
+        resp = self.session.get(self.base_url, timeout=30)
+        print(f"Session warm-up: HTTP {resp.status_code}, cookies: {list(self.session.cookies.keys())}")
+
     def _post_with_retry(self, url, headers, data, retries=3, backoff=2):
         """POST with exponential backoff retry on transient errors."""
         for attempt in range(1, retries + 1):
-            response = requests.post(url, headers=headers, data=data)
+            response = self.session.post(url, headers=headers, data=data)
             if response.status_code < 500:
                 if not response.text.strip():
                     if attempt < retries:
@@ -65,7 +78,9 @@ class DelawareLegislationScraper:
         """Fetch all bills from GA 153 across multiple pages"""
         bills = []
         page = 1
-        
+
+        self._warm_session()
+
         # Get first page to determine total
         print(f"Fetching page 1...")
         data = {
