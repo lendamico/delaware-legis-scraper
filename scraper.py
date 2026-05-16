@@ -1,6 +1,7 @@
-import requests
+import urllib.parse
 import gspread
 from google.oauth2.service_account import Credentials
+from playwright.sync_api import sync_playwright
 from datetime import datetime, timezone
 import time
 import os
@@ -12,20 +13,6 @@ class DelawareLegislationScraper:
         """Initialize the scraper with Google Sheets credentials."""
         # Initialize API settings
         self.api_url = "https://legis.delaware.gov/json/AllLegislation/GetAllLegislation"
-        self.base_url = "https://legis.delaware.gov/AllLegislation"
-        self.headers = {
-            "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
-            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
-            "Referer": "https://legis.delaware.gov/AllLegislation",
-            "Accept": "application/json, text/javascript, */*; q=0.01",
-            "Accept-Language": "en-US,en;q=0.9",
-            "X-Requested-With": "XMLHttpRequest",
-        }
-        self.session = requests.Session()
-        self.session.headers.update({
-            "User-Agent": self.headers["User-Agent"],
-            "Accept-Language": "en-US,en;q=0.9",
-        })
         
         # Initialize Google Sheets
         scopes = [
@@ -45,47 +32,11 @@ class DelawareLegislationScraper:
             self.sheet = self.spreadsheet.sheet1
             print(f"Created new spreadsheet: {spreadsheet_name}")
     
-    def _warm_session(self):
-        """GET the AllLegislation page to establish session cookies before AJAX calls."""
-        print("Warming session (GET AllLegislation page)...")
-        resp = self.session.get(self.base_url, timeout=30)
-        print(f"Session warm-up: HTTP {resp.status_code}, cookies: {list(self.session.cookies.keys())}")
-
-    def _post_with_retry(self, url, headers, data, retries=3, backoff=2):
-        """POST with exponential backoff retry on transient errors."""
-        for attempt in range(1, retries + 1):
-            response = self.session.post(url, headers=headers, data=data)
-            if response.status_code < 500:
-                if not response.text.strip():
-                    if attempt < retries:
-                        wait = backoff ** attempt
-                        print(f"Empty response on attempt {attempt}/{retries}, retrying in {wait}s...")
-                        time.sleep(wait)
-                        continue
-                    raise requests.exceptions.RequestException(
-                        f"API returned empty body after {retries} attempts (status {response.status_code})"
-                    )
-                response.raise_for_status()
-                return response
-            if attempt < retries:
-                wait = backoff ** attempt
-                print(f"Server error {response.status_code} on attempt {attempt}/{retries}, retrying in {wait}s...")
-                time.sleep(wait)
-            else:
-                response.raise_for_status()
-
-    def fetch_all_bills(self, ga_id=153, page_size=100):
-        """Fetch all bills from GA 153 across multiple pages"""
-        bills = []
-        page = 1
-
-        self._warm_session()
-
-        # Get first page to determine total
-        print(f"Fetching page 1...")
-        data = {
+    def _fetch_page_via_browser(self, page, ga_id, page_num, page_size, retries=3, backoff=2):
+        """POST to the API from inside the browser using native fetch() — carries real TLS fingerprint and cookies."""
+        payload = urllib.parse.urlencode({
             "sort": "",
-            "page": page,
+            "page": page_num,
             "pageSize": page_size,
             "group": "",
             "filter": "",
@@ -93,42 +44,71 @@ class DelawareLegislationScraper:
             "sponsorName": "",
             "fromIntroDate": "",
             "toIntroDate": "",
-            "coSponsorCheck": False
-        }
-        
-        response = self._post_with_retry(self.api_url, self.headers, data)
-        try:
-            result = response.json()
-        except requests.exceptions.JSONDecodeError:
-            print(f"Failed to parse JSON. Status: {response.status_code}, Body: {response.text[:500]!r}")
-            raise
+            "coSponsorCheck": "false"
+        })
+        api_url = self.api_url
 
-        total = result['Total']
-        bills.extend(result['Data'])
-        print(f"Total bills: {total}")
-        print(f"Got {len(result['Data'])} bills from page 1")
-        
-        # Calculate remaining pages
-        total_pages = math.ceil(total / page_size)
-        print(f"Total pages to fetch: {total_pages}")
-        
-        # Fetch remaining pages
-        for page in range(2, total_pages + 1):
-            print(f"Fetching page {page}/{total_pages}...")
-            data["page"] = page
-            
-            response = self._post_with_retry(self.api_url, self.headers, data)
+        for attempt in range(1, retries + 1):
             try:
-                result = response.json()
-            except requests.exceptions.JSONDecodeError:
-                print(f"Failed to parse JSON on page {page}. Status: {response.status_code}, Body: {response.text[:500]!r}")
-                raise
+                result = page.evaluate("""
+                    async ({ url, payload }) => {
+                        const resp = await fetch(url, {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+                                'Accept': 'application/json, text/javascript, */*; q=0.01',
+                                'X-Requested-With': 'XMLHttpRequest'
+                            },
+                            body: payload
+                        });
+                        if (!resp.ok) {
+                            const text = await resp.text().catch(() => '');
+                            throw new Error('HTTP ' + resp.status + ': ' + text.slice(0, 200));
+                        }
+                        return resp.json();
+                    }
+                """, {"url": api_url, "payload": payload})
+                return result
+            except Exception as e:
+                if attempt < retries:
+                    wait = backoff ** attempt
+                    print(f"Page {page_num} attempt {attempt}/{retries} failed: {e}. Retrying in {wait}s...")
+                    time.sleep(wait)
+                else:
+                    raise
 
+    def fetch_all_bills(self, ga_id=153, page_size=100):
+        """Fetch all bills from GA 153 using a real browser to bypass WAF IP/fingerprint blocking."""
+        bills = []
+
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            page = browser.new_page()
+
+            print("Loading AllLegislation page to establish browser session...")
+            page.goto("https://legis.delaware.gov/AllLegislation",
+                      wait_until="domcontentloaded", timeout=30000)
+            print("Page loaded.")
+
+            print("Fetching page 1...")
+            result = self._fetch_page_via_browser(page, ga_id, 1, page_size)
+            total = result['Total']
             bills.extend(result['Data'])
-            print(f"Got {len(result['Data'])} bills from page {page}")
-            
-            time.sleep(0.2)  # Rate limiting
-        
+            print(f"Total bills: {total}")
+            print(f"Got {len(result['Data'])} bills from page 1")
+
+            total_pages = math.ceil(total / page_size)
+            print(f"Total pages to fetch: {total_pages}")
+
+            for page_num in range(2, total_pages + 1):
+                print(f"Fetching page {page_num}/{total_pages}...")
+                result = self._fetch_page_via_browser(page, ga_id, page_num, page_size)
+                bills.extend(result['Data'])
+                print(f"Got {len(result['Data'])} bills from page {page_num}")
+                time.sleep(0.2)
+
+            browser.close()
+
         print(f"Total bills fetched: {len(bills)}")
         return bills
     
